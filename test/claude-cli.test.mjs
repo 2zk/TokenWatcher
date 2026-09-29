@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { runStatusLineFromText, runCli } from "../dist/claude-cli.mjs";
 import { formatClaudeSnapshot } from "../dist/claude-format.mjs";
 import { readCache, writeCache, _setCachePath } from "../dist/claude-cache.mjs";
+import { fetchUsageSnapshot, UsageApiError } from "../dist/claude-usage-api.mjs";
 
 const cliPath = fileURLToPath(new URL("../dist/claude-cli.mjs", import.meta.url));
 
@@ -177,13 +178,16 @@ test("--statusline: 同じ値の再送ではキャッシュの受信時刻を新
 test("Claude の通知設定を短く表示する", () => {
     const snapshot = { observedAt: "2026-09-22T00:00:00.000Z", limits: [] };
     const every = formatClaudeSnapshot(snapshot, false, undefined, "popup", 5);
-    assert.match(every.split("\n")[0], /^最終受信日時: [^\n]+【通知設定: 残量 5% 毎 \/ ポップアップ】$/);
+    assert.match(every.split("\n")[0], /^取得日時: [^\n]+【通知設定: 残量 5% 毎 \/ ポップアップ】$/);
 
     const combined = formatClaudeSnapshot(snapshot, false, 10, "notification", 5);
-    assert.match(combined.split("\n")[0], /^最終受信日時: [^\n]+【通知設定: 残量 10% 以下 \+ 5% 毎 \/ Mac 通知センター】$/);
+    assert.match(combined.split("\n")[0], /^取得日時: [^\n]+【通知設定: 残量 10% 以下 \+ 5% 毎 \/ Mac 通知センター】$/);
 
     const excluded = formatClaudeSnapshot(snapshot, false, undefined, "popup", 10, ["claude / five_hour"]);
-    assert.match(excluded.split("\n")[0], /^最終受信日時: [^\n]+【通知設定: 残量 10% 毎 \/ ポップアップ \/ 除外: claude \/ five_hour】$/);
+    assert.match(excluded.split("\n")[0], /^取得日時: [^\n]+【通知設定: 残量 10% 毎 \/ ポップアップ \/ 除外: claude \/ five_hour】$/);
+
+    const apiError = formatClaudeSnapshot(snapshot, false, undefined, "popup", undefined, [], true);
+    assert.match(apiError.split("\n")[0], /^取得日時: [^\n]+【通知設定: API 取得エラー \/ ポップアップ】$/);
 });
 
 test("one-shot: キャッシュなしはエラー + 終了コード 1", async () => {
@@ -222,11 +226,11 @@ test("one-shot: 新鮮なキャッシュを人向けに表示する", async () =
         });
         const { stdout, code } = await captureStdoutAsync(() => runCli(["--source", "statusline"]));
         assert.equal(code, 0);
-        assert.match(stdout, /最終受信日時:/);
+        assert.match(stdout, /取得日時:/);
         assert.doesNotMatch(stdout, /最新データが取得できていません/);
         assert.match(stdout, /five_hour/);
         assert.match(stdout, /54\.5%/);
-        assert.match(stdout, /^最終受信日時: \d{4}-\d{2}-\d{2} /);
+        assert.match(stdout, /^取得日時: \d{4}-\d{2}-\d{2} /);
         assert.match(stdout, /リセット \d{4}-\d{2}-\d{2} /);
     } finally {
         try { rmSync(cachePath); } catch {}
@@ -491,13 +495,18 @@ test("one-shot auto: API 失敗時は警告してキャッシュを表示する"
     const cachePath = makeCachePath();
     _setCachePath(cachePath);
     try {
+        const notifications = [];
         writeCache(apiSnapshot(40));
-        const { stdout, stderr, code } = await captureStdoutAsync(() => runCli([], {
+        const { stdout, stderr, code } = await captureStdoutAsync(() => runCli(["--notify-api-error"], {
             fetchSnapshot: async () => { throw new Error("API 失敗"); },
+            notificationExecutor: async (...args) => { notifications.push(args); },
         }));
         assert.equal(code, 0);
         assert.match(stderr, /警告: API 失敗 キャッシュの値を表示します。/);
         assert.match(stdout, /残量 60\.0%/);
+        assert.match(stdout, /通知設定: API 取得エラー \/ ポップアップ/);
+        assert.equal(notifications.length, 1);
+        assert.match(notifications[0][1][2], /API 失敗/);
     } finally {
         try { rmSync(cachePath); } catch {}
         _setCachePath(null);
@@ -523,17 +532,34 @@ test("one-shot api: API 失敗時はキャッシュがあってもエラー終�
     const cachePath = makeCachePath();
     _setCachePath(cachePath);
     try {
+        const notifications = [];
         writeCache(apiSnapshot(40));
-        const { stdout, stderr, code } = await captureStdoutAsync(() => runCli(["--source", "api"], {
+        const { stdout, stderr, code } = await captureStdoutAsync(() => runCli(["--source", "api", "--notify-api-error", "--notify-method", "notification"], {
             fetchSnapshot: async () => { throw new Error("API 失敗"); },
+            notificationExecutor: async (...args) => { notifications.push(args); },
         }));
         assert.equal(code, 1);
         assert.equal(snapshotLines(stdout).length, 0);
         assert.match(stderr, /エラー: API 失敗/);
+        assert.equal(notifications.length, 1);
+        assert.match(notifications[0][1][1], /display notification/);
     } finally {
         try { rmSync(cachePath); } catch {}
         _setCachePath(null);
     }
+});
+
+test("Claude の認証情報取得失敗も API エラーとして通知する", async () => {
+    const notifications = [];
+    const result = await captureStdoutAsync(() => runCli(["--source", "api", "--notify-api-error"], {
+        fetchSnapshot: () => fetchUsageSnapshot({
+            readCredentials: async () => { throw new UsageApiError("認証情報を読めませんでした"); },
+        }),
+        notificationExecutor: async (...args) => { notifications.push(args); },
+    }));
+    assert.equal(result.code, 1);
+    assert.equal(notifications.length, 1);
+    assert.match(notifications[0][1][2], /認証情報を読めませんでした/);
 });
 
 test("one-shot statusline: API を呼ばない", async () => {
@@ -542,11 +568,14 @@ test("one-shot statusline: API を呼ばない", async () => {
     try {
         writeCache(apiSnapshot(10));
         let called = false;
-        const { code } = await captureStdoutAsync(() => runCli(["--source", "statusline"], {
+        const notifications = [];
+        const { code } = await captureStdoutAsync(() => runCli(["--source", "statusline", "--notify-api-error"], {
             fetchSnapshot: async () => { called = true; return apiSnapshot(); },
+            notificationExecutor: async (...args) => { notifications.push(args); },
         }));
         assert.equal(code, 0);
         assert.equal(called, false);
+        assert.deepEqual(notifications, []);
     } finally {
         try { rmSync(cachePath); } catch {}
         _setCachePath(null);
@@ -592,6 +621,40 @@ test("watch auto: API の値を NDJSON で出し、429 の Retry-After を待機
         assert.equal(lines.length, 2);
         assert.equal(JSON.parse(lines[0]).limits[0].remainingPercent, 75);
         assert.equal(JSON.parse(lines[1]).limits[0].remainingPercent, 75);
+    } finally {
+        try { rmSync(cachePath); } catch {}
+        _setCachePath(null);
+    }
+});
+
+test("watch api: 連続失敗は1回通知し、成功後の再失敗は再通知する", async () => {
+    const cachePath = makeCachePath();
+    _setCachePath(cachePath);
+    try {
+        const sendSigint = sigintCaller();
+        const notifications = [];
+        let calls = 0;
+        let waits = 0;
+        const { code, stderr } = await captureStdoutAsync(() => runCli([
+            "--source", "api", "--watch", "--notify-api-error", "--json",
+        ], {
+            fetchSnapshot: async () => {
+                calls += 1;
+                if (calls === 3) return apiSnapshot(20);
+                throw new Error(`取得失敗 ${calls}`);
+            },
+            notificationExecutor: async (...args) => { notifications.push(args); },
+            waitSeconds: async () => {
+                waits += 1;
+                if (waits === 4) sendSigint();
+            },
+        }));
+        assert.equal(code, 130);
+        assert.equal(calls, 4);
+        assert.equal(notifications.length, 2);
+        assert.match(notifications[0][1][2], /取得失敗 1/);
+        assert.match(notifications[1][1][2], /取得失敗 4/);
+        assert.match(stderr, /エラー: 取得失敗 2/);
     } finally {
         try { rmSync(cachePath); } catch {}
         _setCachePath(null);

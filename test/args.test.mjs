@@ -13,6 +13,7 @@ test("引数なしの既定値は one-shot、interval 180秒、popup通知、tim
       json: false,
       notifyBelow: undefined,
       notifyEvery: undefined,
+      notifyApiError: false,
       notifyMethod: "popup",
       notifyExclude: [],
       codexBin: "codex",
@@ -56,6 +57,7 @@ test("timeout、通知閾値、codex-bin を解釈する", () => {
       json: false,
       notifyBelow: 0,
       notifyEvery: undefined,
+      notifyApiError: false,
       notifyMethod: "popup",
       notifyExclude: [],
       codexBin: "/tmp/fake-codex",
@@ -77,6 +79,11 @@ test("notify-every は1〜99の整数を解釈し、notify-belowと併用でき�
 test("notify-method は popup と notification を解釈する", () => {
   assert.equal(parseArgs(["--notify-method", "popup"]).options.notifyMethod, "popup");
   assert.equal(parseArgs(["--notify-method", "notification"]).options.notifyMethod, "notification");
+});
+
+test("notify-api-error は指定時だけ有効になる", () => {
+  assert.equal(parseArgs([]).options.notifyApiError, false);
+  assert.equal(parseArgs(["--notify-api-error"]).options.notifyApiError, true);
 });
 
 test("notify-method の不正値にはMac 通知センター方式を案内する", () => {
@@ -117,6 +124,7 @@ test("help と version は即時結果を返す", () => {
   assert.match(helpText(), /既定: 180、60以上の整数/);
   assert.match(helpText(), /--notify-below <percent>\s+残量が指定値以下なら通知する（0〜100）/);
   assert.match(helpText(), /--notify-every <percent>\s+指定した割合（%）ごとに通知する（1〜99）/);
+  assert.match(helpText(), /--notify-api-error\s+利用量 API の取得エラーを通知する/);
   assert.match(
     helpText(),
     /--notify-method <method>\s+通知方式: popup（ポップアップ）または notification（Mac 通知センター）（既定: popup）/,

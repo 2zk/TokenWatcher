@@ -38,7 +38,7 @@ function resetCreditsLine(resetCredits) {
         .join("、");
     return `リセットクレジット: 利用可能 ${count}件${details === "" ? "" : `（${details}）`}`;
 }
-export function formatSnapshot(snapshot, notifyBelow = undefined, notifyMethod = "popup", notifyEvery = undefined, notifyExclude = []) {
+export function formatSnapshot(snapshot, notifyBelow = undefined, notifyMethod = "popup", notifyEvery = undefined, notifyExclude = [], notifyApiError = false) {
     const settings = [];
     if (notifyBelow !== undefined) {
         settings.push(`${notifyBelow}% 以下`);
@@ -46,9 +46,14 @@ export function formatSnapshot(snapshot, notifyBelow = undefined, notifyMethod =
     if (notifyEvery !== undefined) {
         settings.push(`${notifyEvery}% 毎`);
     }
-    const notification = settings.length === 0
+    const notificationSettings = [];
+    if (settings.length > 0)
+        notificationSettings.push(`残量 ${settings.join(" + ")}`);
+    if (notifyApiError)
+        notificationSettings.push("API 取得エラー");
+    const notification = notificationSettings.length === 0
         ? ""
-        : `【通知設定: 残量 ${settings.join(" + ")} / ${notifyMethod === "popup" ? "ポップアップ" : "Mac 通知センター"}${notifyExclude.length === 0 ? "" : ` / 除外: ${notifyExclude.join(", ")}`}】`;
+        : `【通知設定: ${notificationSettings.join(" + ")} / ${notifyMethod === "popup" ? "ポップアップ" : "Mac 通知センター"}${notifyExclude.length === 0 ? "" : ` / 除外: ${notifyExclude.join(", ")}`}】`;
     const lines = [`取得日時: ${resetAt(snapshot.observedAt)}${notification}`];
     if (snapshot.limits.length === 0) {
         lines.push("表示可能な利用制限は返されませんでした。");

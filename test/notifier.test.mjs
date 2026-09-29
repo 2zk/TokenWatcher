@@ -339,3 +339,32 @@ test("notifyExclude に部分一致する制限は通知せず、他の制限は
   assert.match(recorder.calls[0].args[2], /^Claude \/ seven_day:/);
   assert.match(recorder.calls[1].args[2], /^Claude Fable \/ five_hour:/);
 });
+
+test("API エラーは連続失敗中に1回通知し、成功後の再失敗で再通知する", async () => {
+  const recorder = recordingExecutor();
+  const notifier = new ThresholdNotifier(undefined, () => {}, recorder.execute, "notification", undefined, "Claude 利用制限");
+
+  await notifier.notifyApiError(new Error("接続失敗"));
+  await notifier.notifyApiError(new Error("再度失敗"));
+  assert.equal(recorder.calls.length, 1);
+  assert.match(recorder.calls[0].args[1], /display notification/);
+  assert.equal(recorder.calls[0].args[2], "利用量 API の取得に失敗しました: 接続失敗");
+  assert.equal(recorder.calls[0].args[3], "Claude 利用制限");
+
+  notifier.clearApiError();
+  await notifier.notifyApiError(new Error("再度失敗"));
+  assert.equal(recorder.calls.length, 2);
+  assert.match(recorder.calls[1].args[2], /再度失敗/);
+});
+
+test("API エラー通知の起動失敗は警告し、連続失敗中は再試行しない", async () => {
+  const warnings = [];
+  const recorder = recordingExecutor({ failure: new Error("通知失敗") });
+  const notifier = new ThresholdNotifier(undefined, (message) => warnings.push(message), recorder.execute);
+
+  await notifier.notifyApiError(new Error("取得失敗"));
+  await notifier.notifyApiError(new Error("取得失敗"));
+  assert.equal(recorder.calls.length, 1);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /macOS ポップアップを表示できませんでした/);
+});

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { readRateLimitsWithRetry } from "../dist/codex-cli.mjs";
+import { readRateLimitsWithRetry, runCli } from "../dist/codex-cli.mjs";
 import { createFakeCodex, readCapturedEvents, waitUntil } from "./helpers/fake-codex.mjs";
 
 const cliPath = fileURLToPath(new URL("../dist/codex-cli.mjs", import.meta.url));
@@ -25,6 +25,83 @@ function spawnCli(args) {
   });
   return { child, completed, stdout: () => stdout, stderr: () => stderr };
 }
+
+async function captureOutputAsync(callback) {
+  const stdout = [];
+  const stderr = [];
+  const originalOut = process.stdout.write;
+  const originalErr = process.stderr.write;
+  process.stdout.write = (chunk) => { stdout.push(String(chunk)); return true; };
+  process.stderr.write = (chunk) => { stderr.push(String(chunk)); return true; };
+  try {
+    const code = await callback();
+    return { code, stdout: stdout.join(""), stderr: stderr.join("") };
+  } finally {
+    process.stdout.write = originalOut;
+    process.stderr.write = originalErr;
+  }
+}
+
+test("Codex の再試行中に取得できれば API エラー通知しない", async () => {
+  const calls = [];
+  let attempts = 0;
+  const server = {
+    async start() {},
+    async readRateLimits() {
+      attempts += 1;
+      if (attempts < 4) throw new Error("一時失敗");
+      return { rateLimitsByLimitId: {} };
+    },
+    async stop() {},
+  };
+  const result = await captureOutputAsync(() => runCli(["--notify-api-error"], {
+    server,
+    notificationExecutor: async (...args) => { calls.push(args); },
+    readDependencies: { waitForRetry: async () => {}, reportRetry: () => {} },
+  }));
+  assert.equal(result.code, 0);
+  assert.equal(attempts, 4);
+  assert.deepEqual(calls, []);
+  assert.match(result.stdout, /通知設定: API 取得エラー \/ ポップアップ/);
+});
+
+test("Codex の再試行を使い切ると API エラーを1回通知する", async () => {
+  const calls = [];
+  let attempts = 0;
+  const server = {
+    async start() {},
+    async readRateLimits() { attempts += 1; throw new Error("取得失敗"); },
+    async stop() {},
+  };
+  const result = await captureOutputAsync(() => runCli(["--notify-api-error", "--notify-method", "notification", "--json"], {
+    server,
+    notificationExecutor: async (...args) => { calls.push(args); },
+    readDependencies: { waitForRetry: async () => {}, reportRetry: () => {} },
+  }));
+  assert.equal(result.code, 1);
+  assert.equal(attempts, 4);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1][1], /display notification/);
+  assert.match(calls[0][1][2], /取得失敗/);
+  assert.match(result.stderr, /通知設定: API 取得エラー \/ Mac 通知センター/);
+  assert.equal(result.stdout, "");
+});
+
+test("Codex app-server の起動失敗を通知する", async () => {
+  const calls = [];
+  const server = {
+    async start() { throw new Error("起動失敗"); },
+    async stop() {},
+  };
+  const result = await captureOutputAsync(() => runCli(["--notify-api-error"], {
+    server,
+    notificationExecutor: async (...args) => { calls.push(args); },
+  }));
+  assert.equal(result.code, 1);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1][1], /display dialog/);
+  assert.match(calls[0][1][2], /起動失敗/);
+});
 
 test("利用量取得は10/20/30秒後に再試行し、4回目に成功すれば結果を返す", async () => {
   const expected = { rateLimits: { codex: {} } };

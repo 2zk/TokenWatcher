@@ -38,9 +38,9 @@ function label(limit) {
 }
 /**
  * Claude snapshot を人向けに整形する。
- * 「最終受信日時」と表示し、stale 時は末尾に注記を加える。
+ * 「取得日時」と表示し、stale 時は末尾に注記を加える。
  */
-export function formatClaudeSnapshot(snapshot, stale, notifyBelow = undefined, notifyMethod = "popup", notifyEvery = undefined, notifyExclude = []) {
+export function formatClaudeSnapshot(snapshot, stale, notifyBelow = undefined, notifyMethod = "popup", notifyEvery = undefined, notifyExclude = [], notifyApiError = false) {
     const settings = [];
     if (notifyBelow !== undefined) {
         settings.push(`${notifyBelow}% 以下`);
@@ -48,10 +48,17 @@ export function formatClaudeSnapshot(snapshot, stale, notifyBelow = undefined, n
     if (notifyEvery !== undefined) {
         settings.push(`${notifyEvery}% 毎`);
     }
-    const notification = settings.length === 0
+    const notificationSettings = [];
+    if (settings.length > 0) {
+        notificationSettings.push(`残量 ${settings.join(" + ")}`);
+    }
+    if (notifyApiError) {
+        notificationSettings.push("API 取得エラー");
+    }
+    const notification = notificationSettings.length === 0
         ? ""
-        : `【通知設定: 残量 ${settings.join(" + ")} / ${notifyMethod === "popup" ? "ポップアップ" : "Mac 通知センター"}${notifyExclude.length === 0 ? "" : ` / 除外: ${notifyExclude.join(", ")}`}】`;
-    const lines = [`最終受信日時: ${formatDateTime(snapshot.observedAt)}${notification}`];
+        : `【通知設定: ${notificationSettings.join(" + ")} / ${notifyMethod === "popup" ? "ポップアップ" : "Mac 通知センター"}${notifyExclude.length === 0 ? "" : ` / 除外: ${notifyExclude.join(", ")}`}】`;
+    const lines = [`取得日時: ${formatDateTime(snapshot.observedAt)}${notification}`];
     if (snapshot.limits.length === 0) {
         lines.push("表示可能な利用制限の情報がありません。");
     }

@@ -38,7 +38,7 @@ function writeResult(snapshot, stale, options) {
         process.stdout.write("\x1B[2J\x1B[H");
     }
     process.stdout.write(
-        `${formatClaudeSnapshot(snapshot, stale, options.notifyBelow, options.notifyMethod, options.notifyEvery, options.notifyExclude)}\n`,
+        `${formatClaudeSnapshot(snapshot, stale, options.notifyBelow, options.notifyMethod, options.notifyEvery, options.notifyExclude, options.notifyApiError)}\n`,
     );
 }
 
@@ -124,9 +124,10 @@ async function runStatusLine() {
  * 利用量 API から snapshot を取得する。取得できた値はキャッシュにも保存する。
  * auto では失敗時にキャッシュへ切り替え、失敗理由を error として返す。
  */
-async function loadApiSnapshot(options, fetchSnapshot) {
+async function loadApiSnapshot(options, fetchSnapshot, notifier) {
     try {
         const snapshot = await fetchSnapshot();
+        notifier.clearApiError();
         try {
             writeCache(snapshot);
         } catch (error) {
@@ -136,6 +137,9 @@ async function loadApiSnapshot(options, fetchSnapshot) {
         }
         return { snapshot, error: undefined };
     } catch (error) {
+        if (options.notifyApiError) {
+            await notifier.notifyApiError(error);
+        }
         if (options.source === "api") {
             throw error;
         }
@@ -181,7 +185,7 @@ async function runApiWatch(options, notifier, shouldStop, setWake, fetchSnapshot
     while (!shouldStop()) {
         let retryAfterSeconds;
         try {
-            const { snapshot, error } = await loadApiSnapshot(options, fetchSnapshot);
+            const { snapshot, error } = await loadApiSnapshot(options, fetchSnapshot, notifier);
             if (error !== undefined) {
                 reportFallback(error, snapshot !== null);
                 retryAfterSeconds = error.retryAfterSeconds;
@@ -332,24 +336,27 @@ export async function runCli(args, dependencies = {}) {
     const notifier = new ThresholdNotifier(
         options.notifyBelow,
         (message) => process.stderr.write(`警告: ${message}\n`),
-        undefined,
+        dependencies.notificationExecutor,
         options.notifyMethod,
         options.notifyEvery,
         "Claude 利用制限",
         options.notifyExclude,
     );
 
-    if (options.json && (options.notifyBelow !== undefined || options.notifyEvery !== undefined)) {
+    if (options.json && (options.notifyBelow !== undefined || options.notifyEvery !== undefined || options.notifyApiError)) {
         const method = options.notifyMethod === "popup" ? "ポップアップ" : "Mac 通知センター";
         const settings = [];
+        const notificationSettings = [];
         if (options.notifyBelow !== undefined) {
             settings.push(`${options.notifyBelow}% 以下`);
         }
         if (options.notifyEvery !== undefined) {
             settings.push(`${options.notifyEvery}% 毎`);
         }
+        if (settings.length > 0) notificationSettings.push(`残量 ${settings.join(" + ")}`);
+        if (options.notifyApiError) notificationSettings.push("API 取得エラー");
         const exclude = options.notifyExclude.length === 0 ? "" : ` / 除外: ${options.notifyExclude.join(", ")}`;
-        process.stderr.write(`通知設定: 残量 ${settings.join(" + ")} / ${method}${exclude}\n`);
+        process.stderr.write(`通知設定: ${notificationSettings.join(" + ")} / ${method}${exclude}\n`);
     }
 
     let stopping = false;
@@ -382,7 +389,7 @@ export async function runCli(args, dependencies = {}) {
             await runApiWatch(options, notifier, () => stopping, setWake, fetchSnapshot, wait);
         } else if (options.source !== "statusline") {
             // one-shot（API）モード
-            const { snapshot, error } = await loadApiSnapshot(options, fetchSnapshot);
+            const { snapshot, error } = await loadApiSnapshot(options, fetchSnapshot, notifier);
             if (error !== undefined) {
                 reportFallback(error, snapshot !== null);
             }

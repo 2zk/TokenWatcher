@@ -27,7 +27,7 @@ function writeResult(snapshot, options) {
     if (options.watch && process.stdout.isTTY) {
         process.stdout.write("\x1B[2J\x1B[H");
     }
-    process.stdout.write(`${formatSnapshot(snapshot, options.notifyBelow, options.notifyMethod, options.notifyEvery, options.notifyExclude)}\n`);
+    process.stdout.write(`${formatSnapshot(snapshot, options.notifyBelow, options.notifyMethod, options.notifyEvery, options.notifyExclude, options.notifyApiError)}\n`);
 }
 function reportError(error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -75,7 +75,20 @@ export async function readRateLimitsWithRetry(server, shouldStop, setWake, depen
     }
     return undefined;
 }
-async function runWatch(server, options, notifier, shouldStop, setWake) {
+async function readRateLimits(server, options, notifier, shouldStop, setWake, dependencies) {
+    try {
+        const result = await readRateLimitsWithRetry(server, shouldStop, setWake, dependencies);
+        if (result !== undefined)
+            notifier.clearApiError();
+        return result;
+    }
+    catch (error) {
+        if (!shouldStop() && options.notifyApiError)
+            await notifier.notifyApiError(error);
+        throw error;
+    }
+}
+async function runWatch(server, options, notifier, shouldStop, setWake, readDependencies) {
     let updatePending = false;
     let wakeCurrentWait;
     const onUpdated = () => {
@@ -85,7 +98,7 @@ async function runWatch(server, options, notifier, shouldStop, setWake) {
     server.on("rateLimitsUpdated", onUpdated);
     try {
         while (!shouldStop()) {
-            const result = await readRateLimitsWithRetry(server, shouldStop, setWake);
+            const result = await readRateLimits(server, options, notifier, shouldStop, setWake, readDependencies);
             if (result === undefined)
                 break;
             const snapshot = filterSnapshot(normalizeRateLimits(result), options.filter);
@@ -128,7 +141,7 @@ async function runWatch(server, options, notifier, shouldStop, setWake) {
         server.off("rateLimitsUpdated", onUpdated);
     }
 }
-export async function runCli(args) {
+export async function runCli(args, dependencies = {}) {
     let parsed;
     try {
         parsed = parseArgs(args);
@@ -150,19 +163,24 @@ export async function runCli(args) {
         return 0;
     }
     const options = parsed.options;
-    const server = new CodexAppServer(options.codexBin, options.timeoutSeconds * 1_000);
-    const notifier = new ThresholdNotifier(options.notifyBelow, (message) => process.stderr.write(`警告: ${message}\n`), undefined, options.notifyMethod, options.notifyEvery, undefined, options.notifyExclude);
-    if (options.json && (options.notifyBelow !== undefined || options.notifyEvery !== undefined)) {
+    const server = dependencies.server ?? new CodexAppServer(options.codexBin, options.timeoutSeconds * 1_000);
+    const notifier = new ThresholdNotifier(options.notifyBelow, (message) => process.stderr.write(`警告: ${message}\n`), dependencies.notificationExecutor, options.notifyMethod, options.notifyEvery, undefined, options.notifyExclude);
+    if (options.json && (options.notifyBelow !== undefined || options.notifyEvery !== undefined || options.notifyApiError)) {
         const method = options.notifyMethod === "popup" ? "ポップアップ" : "Mac 通知センター";
         const settings = [];
+        const notificationSettings = [];
         if (options.notifyBelow !== undefined) {
             settings.push(`${options.notifyBelow}% 以下`);
         }
         if (options.notifyEvery !== undefined) {
             settings.push(`${options.notifyEvery}% 毎`);
         }
+        if (settings.length > 0)
+            notificationSettings.push(`残量 ${settings.join(" + ")}`);
+        if (options.notifyApiError)
+            notificationSettings.push("API 取得エラー");
         const exclude = options.notifyExclude.length === 0 ? "" : ` / 除外: ${options.notifyExclude.join(", ")}`;
-        process.stderr.write(`通知設定: 残量 ${settings.join(" + ")} / ${method}${exclude}\n`);
+        process.stderr.write(`通知設定: ${notificationSettings.join(" + ")} / ${method}${exclude}\n`);
     }
     let stopping = false;
     let exitCode = 0;
@@ -184,16 +202,23 @@ export async function runCli(args) {
     process.on("SIGINT", onSigint);
     process.on("SIGTERM", onSigterm);
     try {
-        await server.start();
+        try {
+            await server.start();
+        }
+        catch (error) {
+            if (!stopping && options.notifyApiError)
+                await notifier.notifyApiError(error);
+            throw error;
+        }
         if (options.watch) {
             await runWatch(server, options, notifier, () => stopping, (nextWake) => {
                 wake = nextWake;
-            });
+            }, dependencies.readDependencies);
         }
         else {
-            const result = await readRateLimitsWithRetry(server, () => stopping, (nextWake) => {
+            const result = await readRateLimits(server, options, notifier, () => stopping, (nextWake) => {
                 wake = nextWake;
-            });
+            }, dependencies.readDependencies);
             if (result === undefined)
                 return receivedSignal ? 130 : exitCode;
             const snapshot = filterSnapshot(normalizeRateLimits(result), options.filter);

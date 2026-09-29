@@ -15,6 +15,7 @@ test("引数なし → run モード・デフォルト値", () => {
     assert.equal(result.options.notifyMethod, "popup");
     assert.equal(result.options.notifyBelow, undefined);
     assert.equal(result.options.notifyEvery, undefined);
+    assert.equal(result.options.notifyApiError, false);
     assert.equal(result.options.filter, undefined);
     assert.equal(result.options.source, "auto");
 });
@@ -100,6 +101,12 @@ test("--notify-method notification を受け付ける", () => {
 test("--notify-method popup を受け付ける", () => {
     const result = parseArgs(["--notify-method", "popup"]);
     assert.equal(result.options.notifyMethod, "popup");
+});
+
+test("--notify-api-error は指定時だけ有効になる", () => {
+    assert.equal(parseArgs([]).options.notifyApiError, false);
+    assert.equal(parseArgs(["--notify-api-error"]).options.notifyApiError, true);
+    assert.match(helpText(), /--notify-api-error\s+利用量 API の取得エラーを通知する/);
 });
 
 test("複数オプションの組み合わせ", () => {

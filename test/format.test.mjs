@@ -83,6 +83,11 @@ test("popup方式は取得日時行にポップアップと表示する", () => 
   assert.equal(lines.filter((line) => line.includes("通知設定:")).length, 1);
 });
 
+test("API エラー通知だけを指定しても取得日時行に設定を表示する", () => {
+  const line = formatSnapshot(snapshotWithDurations([300]), undefined, "notification", undefined, [], true).split("\n")[0];
+  assert.match(line, /^取得日時: [^\n]+【通知設定: API 取得エラー \/ Mac 通知センター】$/);
+});
+
 test("刻み通知を指定すると取得日時行に通知間隔と通知方法を含める", () => {
   const lines = formatSnapshot(snapshotWithDurations([300]), undefined, "notification", 20).split("\n");
 

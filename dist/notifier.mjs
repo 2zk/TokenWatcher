@@ -59,6 +59,7 @@ export class ThresholdNotifier {
     notifyExclude;
     states = new Map();
     hasWarned = false;
+    apiErrorActive = false;
     constructor(threshold, warn, execute = defaultNotificationExecutor, method = "popup", notifyEvery = undefined, title = "Codex 利用制限", notifyExclude = []) {
         this.threshold = threshold;
         this.warn = warn;
@@ -77,6 +78,16 @@ export class ThresholdNotifier {
                 continue;
             await this.maybeNotify(limit, observedAtEpochSeconds);
         }
+    }
+    async notifyApiError(error) {
+        if (this.apiErrorActive)
+            return;
+        this.apiErrorActive = true;
+        const detail = error instanceof Error ? error.message : String(error);
+        await this.sendNotification(`利用量 API の取得に失敗しました: ${detail}`);
+    }
+    clearApiError() {
+        this.apiErrorActive = false;
     }
     isExcluded(limit) {
         const name = `${limit.limitName ?? limit.limitId} / ${limit.window}`.toLowerCase();
