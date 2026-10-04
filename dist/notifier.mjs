@@ -89,6 +89,32 @@ export class ThresholdNotifier {
     clearApiError() {
         this.apiErrorActive = false;
     }
+    /** 設定変更時は現在値を基準にし、変更だけでは通知しない。 */
+    configure(options, snapshot) {
+        const exclude = options.notifyExclude.map((pattern) => pattern.toLowerCase());
+        const changed = this.threshold !== options.notifyBelow ||
+            this.notifyEvery !== options.notifyEvery ||
+            JSON.stringify(this.notifyExclude) !== JSON.stringify(exclude);
+        this.threshold = options.notifyBelow;
+        this.notifyEvery = options.notifyEvery;
+        this.method = options.notifyMethod;
+        this.notifyExclude = exclude;
+        if (!changed)
+            return;
+        this.states.clear();
+        if (snapshot === undefined)
+            return;
+        for (const limit of snapshot.limits) {
+            if (this.isExcluded(limit))
+                continue;
+            this.states.set(`${limit.limitId}:${limit.window}`, {
+                reachedThresholds: this.reachedThresholds(limit.remainingPercent),
+                remainingPercent: limit.remainingPercent,
+                resetsAtEpochSeconds: limit.resetsAtEpochSeconds,
+                pendingResetAtEpochSeconds: undefined,
+            });
+        }
+    }
     isExcluded(limit) {
         const name = `${limit.limitName ?? limit.limitId} / ${limit.window}`.toLowerCase();
         return this.notifyExclude.some((pattern) => name.includes(pattern));

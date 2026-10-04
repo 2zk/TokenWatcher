@@ -16,10 +16,11 @@ const WINDOWS = [
 ];
 
 export class UsageApiError extends Error {
-    constructor(message, retryAfterSeconds = undefined) {
+    constructor(message, retryAfterSeconds = undefined, diagnostic = undefined) {
         super(message);
         this.name = "UsageApiError";
         this.retryAfterSeconds = retryAfterSeconds;
+        this.diagnostic = diagnostic;
     }
 }
 
@@ -28,17 +29,21 @@ function isRecord(value) {
 }
 
 /** macOS キーチェーンから Claude Code の認証情報 JSON 文字列を読む。 */
-function readKeychain() {
+function readKeychain(signal) {
     return new Promise((resolve, reject) => {
         execFile(
             "/usr/bin/security",
             ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
-            { timeout: SECURITY_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+            { timeout: SECURITY_TIMEOUT_MS, maxBuffer: 1024 * 1024, signal },
             (error, stdout) => {
                 if (error) {
                     // stderr にはトークンが含まれないが、念のためメッセージには含めない
                     reject(new UsageApiError(
                         "キーチェーンから Claude Code の認証情報を読めませんでした。Claude Code にログインしているか、キーチェーンへのアクセスを許可したか確認してください。",
+                        undefined, {
+                            code: error.killed ? "keychain_timeout" : "keychain_access",
+                            exitStatus: Number.isInteger(error.code) ? error.code : undefined,
+                        },
                     ));
                     return;
                 }
@@ -57,14 +62,14 @@ export function parseCredentials(text, nowMs = Date.now()) {
     try {
         parsed = JSON.parse(text);
     } catch {
-        throw new UsageApiError("Claude Code の認証情報の形式を解釈できませんでした。");
+        throw new UsageApiError("Claude Code の認証情報の形式を解釈できませんでした。", undefined, { code: "credentials_invalid" });
     }
     const oauth = isRecord(parsed) ? parsed.claudeAiOauth : undefined;
     if (!isRecord(oauth) || typeof oauth.accessToken !== "string" || oauth.accessToken === "") {
-        throw new UsageApiError("Claude Code の認証情報に OAuth トークンがありません。Pro/Max プランでログインしてください。");
+        throw new UsageApiError("Claude Code の認証情報に OAuth トークンがありません。Pro/Max プランでログインしてください。", undefined, { code: "credentials_missing" });
     }
     if (typeof oauth.expiresAt === "number" && Number.isFinite(oauth.expiresAt) && oauth.expiresAt <= nowMs) {
-        throw new UsageApiError("Claude Code の OAuth トークンが期限切れです。ターミナル版 Claude Code（claude コマンド）を起動すると更新されます（デスクトップアプリの利用では更新されません）。");
+        throw new UsageApiError("Claude Code の OAuth トークンが期限切れです。ターミナル版 Claude Code（claude コマンド）を起動すると更新されます（デスクトップアプリの利用では更新されません）。", undefined, { code: "credentials_expired" });
     }
     return oauth.accessToken;
 }
@@ -83,9 +88,30 @@ function parseRetryAfter(value) {
     return Math.max(0, Math.ceil((date - Date.now()) / 1000));
 }
 
+const NETWORK_CODES = new Set([
+    "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENETUNREACH", "EHOSTUNREACH",
+    "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "UND_ERR_SOCKET",
+    "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+]);
+function connectionDiagnostic(error, signal) {
+    let networkCode;
+    let timeout = error?.name === "TimeoutError" || signal?.reason?.name === "TimeoutError";
+    let cause = error;
+    for (let depth = 0; cause && depth < 3; depth++, cause = cause.cause) {
+        if (NETWORK_CODES.has(cause.code)) {
+            networkCode = cause.code;
+            timeout ||= cause.code.includes("TIMEOUT") || cause.code === "ETIMEDOUT";
+            break;
+        }
+    }
+    return { code: timeout ? "api_timeout" : "api_network", networkCode };
+}
+
 /** 利用量 API を呼び、応答 JSON を返す。 */
-export async function requestUsage(token, fetchImpl = fetch) {
+export async function requestUsage(token, fetchImpl = fetch, signal) {
     let response;
+    const requestSignal = signal === undefined ? AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        : AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
     try {
         response = await fetchImpl(USAGE_URL, {
             method: "GET",
@@ -94,28 +120,33 @@ export async function requestUsage(token, fetchImpl = fetch) {
                 "anthropic-beta": OAUTH_BETA,
                 Accept: "application/json",
             },
-            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+            signal: requestSignal,
         });
     } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        throw new UsageApiError(`利用量 API に接続できませんでした: ${reason}`);
+        throw new UsageApiError(`利用量 API に接続できませんでした: ${reason}`, undefined, connectionDiagnostic(error, requestSignal));
     }
     if (response.status === 401 || response.status === 403) {
         throw new UsageApiError(
             `利用量 API の認証に失敗しました（HTTP ${response.status}）。ターミナル版 Claude Code（claude コマンド）で再ログインしてください。`,
+            undefined, { code: "api_auth", httpStatus: response.status },
         );
     }
     if (response.status === 429) {
         const retryAfterSeconds = parseRetryAfter(response.headers.get("retry-after"));
-        throw new UsageApiError("利用量 API の呼び出し回数制限に達しました（HTTP 429）。", retryAfterSeconds);
+        throw new UsageApiError("利用量 API の呼び出し回数制限に達しました（HTTP 429）。", retryAfterSeconds, { code: "api_rate_limit", httpStatus: 429 });
     }
     if (!response.ok) {
-        throw new UsageApiError(`利用量 API がエラーを返しました（HTTP ${response.status}）。`);
+        throw new UsageApiError(`利用量 API がエラーを返しました（HTTP ${response.status}）。`, undefined, { code: "api_http", httpStatus: response.status });
     }
     try {
         return await response.json();
-    } catch {
-        throw new UsageApiError("利用量 API の応答が JSON ではありません。");
+    } catch (error) {
+        const diagnostic = connectionDiagnostic(error, requestSignal);
+        if (diagnostic.code === "api_timeout" || diagnostic.networkCode) {
+            throw new UsageApiError("利用量 API の応答を受信できませんでした。", undefined, diagnostic);
+        }
+        throw new UsageApiError("利用量 API の応答が JSON ではありません。", undefined, { code: "api_invalid_json" });
     }
 }
 
@@ -211,12 +242,12 @@ export function normalizeUsageResponse(json, receivedAt = new Date()) {
 
 /** キーチェーンのトークンで利用量 API を呼び、snapshot を返す。 */
 export async function fetchUsageSnapshot(dependencies = {}) {
-    const readCredentials = dependencies.readCredentials ?? readKeychain;
+    const readCredentials = dependencies.readCredentials ?? (() => readKeychain(dependencies.signal));
     const token = parseCredentials(await readCredentials());
-    const json = await requestUsage(token, dependencies.fetchImpl ?? fetch);
+    const json = await requestUsage(token, dependencies.fetchImpl ?? fetch, dependencies.signal);
     const snapshot = normalizeUsageResponse(json);
     if (snapshot.limits.length === 0) {
-        throw new UsageApiError("利用量 API の応答に利用制限が含まれていません。");
+        throw new UsageApiError("利用量 API の応答に利用制限が含まれていません。", undefined, { code: "api_missing_limits" });
     }
     return snapshot;
 }

@@ -1,6 +1,6 @@
 # TokenWatcher
 
-Codex と Claude（Claude Code Pro/Max）の利用制限の残量を表示・監視する macOS 向け Node.js CLI。残量が減ったときや API 取得エラーが起きたときに、Mac 通知センターまたはポップアップウィンドウで通知できる。
+Codex と Claude（Claude Code Pro/Max）の利用制限の残量を表示・監視する macOS 向けツール。Node.js CLI と Mac アプリ・通知センターウィジェットを利用できる。残量が減ったときや API 取得エラーが起きたときに、Mac 通知センターまたはポップアップウィンドウで通知できる。
 
 Codex 用と Claude 用は別のコマンドになっている。
 
@@ -243,7 +243,37 @@ Claude Fable / seven_day / 7日（週次）: 残量 95.0% / リセット 2026-09
 
 ---
 
+## Mac アプリ・通知センターウィジェット（試作）
+
+SwiftUI の Mac アプリと中サイズの WidgetKit ウィジェットを `macos/` に追加している。Codex / Claude の短期・週次残量を横バーで表示し、通知方法・閾値・刻み通知・API エラー通知・除外をアプリの設定画面からサービス別に保存できる。従来の CLI はそのまま使える。
+
+### ビルドと配置
+
+macOS 14 以上、Xcode、Node.js 20 以上が必要。Codex / Claude のログイン条件は CLI 版と共通。
+
+1. `macos/Signing.local.xcconfig` を作成し、`DEVELOPMENT_TEAM = YOUR_TEAM_ID` を記載する。`YOUR_TEAM_ID` は自身の署名 Team ID に置き換える。このファイルは Git 管理外。
+2. `macos/TokenWatcher.xcodeproj` を Xcode で開き、両ターゲットの「Signing & Capabilities」で同じ Team が適用されていることを確認する。App Group は共通の `$(DEVELOPMENT_TEAM).TokenWatcher` を使う。
+3. Scheme `TokenWatcher`、実行先 `My Mac` を選び、ビルド・実行する。
+4. TokenWatcher を終了し、Xcode の `Products → TokenWatcher.app` を右クリックして `Show in Finder` を選ぶ。
+5. `TokenWatcher.app` を丸ごと `~/Applications` にコピーする。フォルダがなければ作成する。以後はコピー先のアプリをダブルクリックして起動できる。
+
+ウィジェットと取得用 JavaScript はアプリに含まれる。Node.js 本体は同梱しないため、設定画面でインストール済み Node.js の絶対パスを指定する。コード更新時はアプリを終了し、再ビルドした `.app` をコピーし直す。同じ Bundle Identifier / Team / App Group であれば、設定と取得値を引き継ぐ。
+
+Xcode 上で Team を選び直すと、共有プロジェクトに Team ID が保存される場合がある。コミット前に確認し、個人の Team ID は `Signing.local.xcconfig` だけで管理する。詳しい署名・ビルド手順は [Mac アプリの手順](macos/README.md) を参照。
+
+### 起動・表示・通知設定
+
+- 初回は「情報取得を開始」で確認して取得を開始する。開始した選択を保存し、次回から起動時に自動取得する。起動直後は前回の実データを表示し、未取得は「—」、古い値やリセット時刻を過ぎた値は「更新待ち」とする。
+- 通知センターの「ウィジェットを編集」から「TokenWatcher 残量」を追加する。ウィジェット全体をクリックするとアプリを開く。バーは残量30％超が緑、10％超〜30％が橙、10％以下が赤。描画の更新時刻は macOS が管理する。
+- 「設定 → 取得」で Node.js / Codex の実行パス、取得間隔、Claude の取得元を指定する。「更新」で手動取得、「詳細ログ」で取得失敗の理由や待機状況を確認する。
+- 「設定」で Codex / Claude 別に通知方法、閾値、減少幅、取得エラー通知、除外パターンを保存する。初期状態は通知条件すべて無効。通知除外にしても表示は残る。通知センター方式は macOS の通知許可も必要。
+- 「設定 → 一般」でメニューバーのアイコンを非表示にできる。Dock やウィジェットからアプリを開ける。ウィンドウを閉じても取得は続き、Command-Q でアプリを終了すると停止する。
+
+CLI とアプリの通知設定は独立する。両方で通知監視を動かすと二重通知になる場合がある。ログイン時の自動起動は未対応。
+
 ## 開発とテスト
+
+### CLI テスト
 
 テストはNode.js標準のテストランナーで実行する。
 

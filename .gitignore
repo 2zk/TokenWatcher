@@ -1,0 +1,4 @@
+.build/
+macos/Signing.local.xcconfig
+**/xcuserdata/
+.DS_Store

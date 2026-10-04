@@ -169,3 +169,60 @@ test("fetchUsageSnapshot: 利用制限が1つもなければエラー", async ()
         fetchImpl: async () => fakeResponse(200, {}),
     }), /含まれていません/);
 });
+
+test("認証情報の不正・欠落・期限切れを診断分類で区別し、秘密情報を含めない", () => {
+    const cases = [
+        ["invalid", "credentials_invalid"],
+        [JSON.stringify({}), "credentials_missing"],
+        [credentials({ expiresAt: Date.now() - 1 }), "credentials_expired"],
+    ];
+    for (const [text, code] of cases) {
+        assert.throws(() => parseCredentials(text), (error) => {
+            assert.equal(error.diagnostic.code, code);
+            assert.doesNotMatch(JSON.stringify(error.diagnostic), /test-token-value/);
+            return true;
+        });
+    }
+});
+
+test("HTTPの診断にはステータスと待機指定を残し、応答本文を含めない", async () => {
+    for (const [status, code] of [[401, "api_auth"], [403, "api_auth"], [429, "api_rate_limit"], [503, "api_http"]]) {
+        await assert.rejects(requestUsage(TOKEN, async () => fakeResponse(status, { secret: TOKEN }, { "retry-after": "600" })), (error) => {
+            assert.deepEqual(error.diagnostic, { code, httpStatus: status });
+            if (status === 429) assert.equal(error.retryAfterSeconds, 600);
+            assert.doesNotMatch(JSON.stringify(error.diagnostic), /test-token-value|secret/);
+            return true;
+        });
+    }
+});
+
+test("通信・タイムアウトの診断は既知のコードだけを採用する", async () => {
+    const failures = [
+        [Object.assign(new Error(TOKEN), { name: "TimeoutError" }), { code: "api_timeout", networkCode: undefined }],
+        [new Error(TOKEN, { cause: { code: "ENOTFOUND", message: TOKEN } }), { code: "api_network", networkCode: "ENOTFOUND" }],
+        [new Error(TOKEN, { cause: { code: "UND_ERR_CONNECT_TIMEOUT" } }), { code: "api_timeout", networkCode: "UND_ERR_CONNECT_TIMEOUT" }],
+        [Object.assign(new Error(TOKEN), { code: TOKEN }), { code: "api_network", networkCode: undefined }],
+    ];
+    for (const [failure, expected] of failures) {
+        await assert.rejects(requestUsage(TOKEN, async () => { throw failure; }), (error) => {
+            assert.deepEqual(error.diagnostic, expected);
+            assert.doesNotMatch(JSON.stringify(error.diagnostic), /test-token-value/);
+            return true;
+        });
+    }
+});
+
+test("応答本文の受信タイムアウトと不正JSONを診断で区別する", async () => {
+    await assert.rejects(requestUsage(TOKEN, async () => fakeResponse(200,
+        Object.assign(new Error(TOKEN), { name: "TimeoutError" }))), (error) => error.diagnostic.code === "api_timeout");
+    await assert.rejects(requestUsage(TOKEN, async () => fakeResponse(200, new SyntaxError(TOKEN))),
+        (error) => error.diagnostic.code === "api_invalid_json");
+    const cancellation = new AbortController();
+    await assert.rejects(requestUsage(TOKEN, async () => ({
+        ...fakeResponse(200, {}),
+        json: async () => {
+            cancellation.abort(new DOMException("timeout", "TimeoutError"));
+            throw new DOMException("aborted", "AbortError");
+        },
+    }), cancellation.signal), (error) => error.diagnostic.code === "api_timeout");
+});
