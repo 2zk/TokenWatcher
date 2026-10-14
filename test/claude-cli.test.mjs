@@ -441,6 +441,32 @@ function apiSnapshot(usedPercent = 30) {
     };
 }
 
+test("Claude は端末に残量バーを表示し、端末でも JSON にバーを混ぜない", async () => {
+    const cachePath = makeCachePath();
+    _setCachePath(cachePath);
+    const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    try {
+        const dependencies = { fetchSnapshot: async () => apiSnapshot(50) };
+        const human = await captureStdoutAsync(() => runCli([], dependencies));
+        assert.equal(human.code, 0);
+        assert.match(human.stdout, /Claude \/ five_hour \/ 5時間: 残量 50\.0%\n  /);
+        assert.match(human.stdout, /█{16}/);
+        assert.match(human.stdout, /░{16}/);
+        assert.match(human.stdout, /\n  リセット \d{4}-\d{2}-\d{2} /);
+
+        const json = await captureStdoutAsync(() => runCli(["--json"], dependencies));
+        assert.equal(json.code, 0);
+        assert.equal(JSON.parse(snapshotLines(json.stdout)[0]).limits[0].remainingPercent, 50);
+        assert.doesNotMatch(json.stdout, /[█░\x1B]/);
+    } finally {
+        if (ttyDescriptor) Object.defineProperty(process.stdout, "isTTY", ttyDescriptor);
+        else delete process.stdout.isTTY;
+        try { rmSync(cachePath); } catch {}
+        _setCachePath(null);
+    }
+});
+
 test("one-shot auto: API の値を表示し、キャッシュにも保存する", async () => {
     const cachePath = makeCachePath();
     _setCachePath(cachePath);

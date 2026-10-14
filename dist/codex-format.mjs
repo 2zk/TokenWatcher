@@ -1,4 +1,5 @@
 import { alignColumns } from "./align-columns.mjs";
+import { formatRemainingCards } from "./remaining-bars.mjs";
 // 桁をそろえるため常に小数1桁で表す。
 function percent(value) {
     return `${value.toFixed(1)}%`;
@@ -38,7 +39,7 @@ function resetCreditsLine(resetCredits) {
         .join("、");
     return `リセットクレジット: 利用可能 ${count}件${details === "" ? "" : `（${details}）`}`;
 }
-export function formatSnapshot(snapshot, notifyBelow = undefined, notifyMethod = "popup", notifyEvery = undefined, notifyExclude = [], notifyApiError = false) {
+export function formatSnapshot(snapshot, notifyBelow = undefined, notifyMethod = "popup", notifyEvery = undefined, notifyExclude = [], notifyApiError = false, display = {}) {
     const settings = [];
     if (notifyBelow !== undefined) {
         settings.push(`${notifyBelow}% 以下`);
@@ -58,17 +59,25 @@ export function formatSnapshot(snapshot, notifyBelow = undefined, notifyMethod =
     if (snapshot.limits.length === 0) {
         lines.push("表示可能な利用制限は返されませんでした。");
     }
-    lines.push(...alignColumns(snapshot.limits.map((limit) => [
-        label(limit),
-        " / ",
-        limit.window,
-        " / ",
-        `${duration(limit.windowDurationMins)}:`,
-        " 残量 ",
-        percent(limit.remainingPercent),
-        " / リセット ",
-        resetAt(limit.resetsAt),
-    ])));
+    if (display.bars) {
+        lines.push(...formatRemainingCards(snapshot.limits.map((limit) => ({
+            label: `${label(limit)} / ${limit.window} / ${duration(limit.windowDurationMins)}`,
+            remainingPercent: limit.remainingPercent,
+            resetAt: resetAt(limit.resetsAt),
+        })), display));
+    } else {
+        lines.push(...alignColumns(snapshot.limits.map((limit) => [
+            label(limit),
+            " / ",
+            limit.window,
+            " / ",
+            `${duration(limit.windowDurationMins)}:`,
+            " 残量 ",
+            percent(limit.remainingPercent),
+            " / リセット ",
+            resetAt(limit.resetsAt),
+        ])));
+    }
     if (snapshot.resetCredits !== undefined) {
         lines.push(resetCreditsLine(snapshot.resetCredits));
     }

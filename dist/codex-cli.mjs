@@ -4,6 +4,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CodexAppServer } from "./codex-app-server.mjs";
 import { formatJson, formatSnapshot } from "./codex-format.mjs";
+import { terminalDisplayOptions } from "./remaining-bars.mjs";
 import { normalizeRateLimits } from "./codex-limits.mjs";
 import { ThresholdNotifier } from "./notifier.mjs";
 import { AppServerError, CliUsageError } from "./types.mjs";
@@ -27,7 +28,7 @@ function writeResult(snapshot, options) {
     if (options.watch && process.stdout.isTTY) {
         process.stdout.write("\x1B[2J\x1B[H");
     }
-    process.stdout.write(`${formatSnapshot(snapshot, options.notifyBelow, options.notifyMethod, options.notifyEvery, options.notifyExclude, options.notifyApiError)}\n`);
+    process.stdout.write(`${formatSnapshot(snapshot, options.notifyBelow, options.notifyMethod, options.notifyEvery, options.notifyExclude, options.notifyApiError, terminalDisplayOptions())}\n`);
 }
 function reportError(error) {
     const message = error instanceof Error ? error.message : String(error);

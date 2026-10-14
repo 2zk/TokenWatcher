@@ -1,4 +1,5 @@
 import { alignColumns } from "./align-columns.mjs";
+import { formatRemainingCards } from "./remaining-bars.mjs";
 function percent(value) {
     return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
 }
@@ -40,7 +41,7 @@ function label(limit) {
  * Claude snapshot を人向けに整形する。
  * 「取得日時」と表示し、stale 時は末尾に注記を加える。
  */
-export function formatClaudeSnapshot(snapshot, stale, notifyBelow = undefined, notifyMethod = "popup", notifyEvery = undefined, notifyExclude = [], notifyApiError = false) {
+export function formatClaudeSnapshot(snapshot, stale, notifyBelow = undefined, notifyMethod = "popup", notifyEvery = undefined, notifyExclude = [], notifyApiError = false, display = {}) {
     const settings = [];
     if (notifyBelow !== undefined) {
         settings.push(`${notifyBelow}% 以下`);
@@ -62,17 +63,25 @@ export function formatClaudeSnapshot(snapshot, stale, notifyBelow = undefined, n
     if (snapshot.limits.length === 0) {
         lines.push("表示可能な利用制限の情報がありません。");
     }
-    lines.push(...alignColumns(snapshot.limits.map((limit) => [
-        label(limit),
-        " / ",
-        limit.window,
-        " / ",
-        `${duration(limit.windowDurationMins)}:`,
-        " 残量 ",
-        fixedPercent(limit.remainingPercent),
-        " / リセット ",
-        formatDateTime(limit.resetsAt),
-    ])));
+    if (display.bars) {
+        lines.push(...formatRemainingCards(snapshot.limits.map((limit) => ({
+            label: `${label(limit)} / ${limit.window} / ${duration(limit.windowDurationMins)}`,
+            remainingPercent: limit.remainingPercent,
+            resetAt: formatDateTime(limit.resetsAt),
+        })), { ...display, stale }));
+    } else {
+        lines.push(...alignColumns(snapshot.limits.map((limit) => [
+            label(limit),
+            " / ",
+            limit.window,
+            " / ",
+            `${duration(limit.windowDurationMins)}:`,
+            " 残量 ",
+            fixedPercent(limit.remainingPercent),
+            " / リセット ",
+            formatDateTime(limit.resetsAt),
+        ])));
+    }
     if (stale) {
         lines.push("※ 最新データが取得できていません");
     }

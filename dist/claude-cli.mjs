@@ -5,6 +5,7 @@ import { parseArgs, helpText } from "./claude-args.mjs";
 import { normalizeStatusLine, isStale } from "./claude-limits.mjs";
 import { readCache, writeCache, cachePath } from "./claude-cache.mjs";
 import { formatClaudeSnapshot, formatClaudeJson, formatStatusLine } from "./claude-format.mjs";
+import { terminalDisplayOptions } from "./remaining-bars.mjs";
 import { fetchUsageSnapshot } from "./claude-usage-api.mjs";
 import { ThresholdNotifier } from "./notifier.mjs";
 import { CliUsageError } from "./types.mjs";
@@ -38,7 +39,7 @@ function writeResult(snapshot, stale, options) {
         process.stdout.write("\x1B[2J\x1B[H");
     }
     process.stdout.write(
-        `${formatClaudeSnapshot(snapshot, stale, options.notifyBelow, options.notifyMethod, options.notifyEvery, options.notifyExclude, options.notifyApiError)}\n`,
+        `${formatClaudeSnapshot(snapshot, stale, options.notifyBelow, options.notifyMethod, options.notifyEvery, options.notifyExclude, options.notifyApiError, terminalDisplayOptions())}\n`,
     );
 }
 
