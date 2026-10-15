@@ -27,7 +27,8 @@ xcrun swiftc -g -parse-as-library -D SCENE_CHECK -module-cache-path "$build_dir/
 # ブリッジ・App Group・URL スキームを含めず、認証情報と実データを扱わない。
 : > "$build_dir/stdout.log"
 : > "$build_dir/stderr.log"
-open -n -W --stdout "$build_dir/stdout.log" --stderr "$build_dir/stderr.log" "$bundle_dir/.." &
+open -n -W --stdout "$build_dir/stdout.log" --stderr "$build_dir/stderr.log" "$bundle_dir/.." \
+    --args -ApplePersistenceIgnoreState YES &
 launcher_pid=$!
 (sleep 20
     pkill -TERM -f "^$bundle_dir/MacOS/TokenWatcherSceneCheck([[:space:]]|$)" 2>/dev/null || true

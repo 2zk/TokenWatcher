@@ -29,7 +29,7 @@ final class NotificationDispatcher: NSObject, UNUserNotificationCenterDelegate {
             popup.showWindow(nil)
             popup.window?.center()
             popup.window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            popup.window?.orderFrontRegardless()
         } else {
             Task {
                 let center = UNUserNotificationCenter.current()
@@ -62,6 +62,8 @@ private final class PopupController: NSWindowController, NSWindowDelegate {
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         panel.title = title
         panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.level = .floating
         super.init(window: panel)
         panel.delegate = self
         panel.contentView = NSHostingView(rootView: VStack(alignment: .leading, spacing: 18) {

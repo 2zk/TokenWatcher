@@ -53,9 +53,46 @@ enum SceneChecks {
             sendEvent(eventClass: 0x4755524C, eventID: 0x4755524C, url: "tokenwatcher://dashboard")
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard mainWindowIsVisible else { fail("ウィジェット URL の処理で画面が戻らなかった") }
+            guard let dashboard = NSApp.windows.first(where: { $0.title == "TokenWatcher" && $0.isVisible }) else {
+                fail("通知チェック用のメイン画面が見つからなかった")
+            }
+            await checkMinimizedPopup(dashboard)
             FileHandle.standardOutput.write(Data("サンプル廃止・前回値復元・Dock アイコン設定・メニューバー表示切替・Dock/URL イベントによる再表示に成功\n".utf8))
             NSApp.terminate(nil)
         }
+    }
+    private static func checkMinimizedPopup(_ dashboard: NSWindow) async {
+        let notifications = NotificationDispatcher()
+        let title = "最小化通知チェック"
+        dashboard.miniaturize(nil)
+        for _ in 0..<20 {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            if dashboard.isMiniaturized { break }
+        }
+        guard dashboard.isMiniaturized else { fail("通知チェック用のメイン画面を最小化できなかった") }
+        NSApp.deactivate()
+        for _ in 0..<20 {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            if !NSApp.isActive { break }
+        }
+        guard !NSApp.isActive else { fail("通知チェック用アプリを非アクティブにできなかった") }
+        notifications.send(title: title, message: "最小化中の通知表示を確認", method: .popup) { error in
+            if let error { fail("ポップアップ表示に失敗: \(error)") }
+        }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        guard let popup = NSApp.windows.first(where: { $0.title == title }) else {
+            fail("通知パネルが作成されなかった")
+        }
+        guard dashboard.isMiniaturized, !NSApp.isActive,
+            popup.isVisible, popup.occlusionState.contains(.visible) else {
+            fail("最小化・非アクティブ中に通知が画面へ表示されなかった")
+        }
+        popup.performClose(nil)
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        guard !popup.isVisible else { fail("通知パネルを閉じられなかった") }
+        dashboard.deminiaturize(nil)
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        FileHandle.standardOutput.write(Data("最小化・非アクティブ中のポップアップ表示と閉じる操作に成功\n".utf8))
     }
     private static func checkStartupRestoration() {
         do {
