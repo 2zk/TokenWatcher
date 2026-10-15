@@ -120,7 +120,7 @@ test("JSON出力はsnapshotを1行でそのまま表現する", () => {
   assert.deepEqual(JSON.parse(output), snapshot);
 });
 
-test("resetCredits があれば利用可能なクレジットを期限順に1行で表示する", () => {
+test("resetCredits があれば件数の下に利用可能なクレジットを期限順の箇条書きで表示する", () => {
   const snapshot = snapshotWithDurations([300]);
   snapshot.resetCredits = {
     availableCount: 2,
@@ -132,11 +132,16 @@ test("resetCredits があれば利用可能なクレジットを期限順に1行
   };
   const lines = formatSnapshot(snapshot).split("\n");
 
-  assert.equal(lines.length, 3);
+  assert.equal(lines.length, 5);
+  assert.equal(lines[2], "リセットクレジット: 利用可能 2件");
   assert.match(
-    lines[2],
-    /^リセットクレジット: 利用可能 2件（Full reset \/ 期限 2026-10-22 [^、]+、codexRateLimits \/ 期限 2026-10-23 [^）]+）$/,
+    lines[3],
+    /^  - Full reset \/ 期限 2026-10-22 \d{1,2}:\d{2}:\d{2}$/,
   );
+  assert.match(lines[4], /^  - codexRateLimits \/ 期限 2026-10-23 \d{1,2}:\d{2}:\d{2}$/);
+  const terminalLines = formatSnapshot(snapshot, undefined, "popup", undefined, [], false, { bars: true }).split("\n");
+  assert.deepEqual(terminalLines.slice(-3), lines.slice(-3));
+  assert.deepEqual(JSON.parse(formatJson(snapshot)), snapshot);
 });
 
 test("利用可能なクレジットがなければ件数だけ表示し、resetCredits がなければ行を出さない", () => {

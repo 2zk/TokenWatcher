@@ -12,12 +12,13 @@ export function formatRemainingBar(remaining, { color = false, stale = false, co
     const percent = Math.min(100, Math.max(0, remaining));
     const filledWidth = Math.round(width * percent / 100);
     const filled = "█".repeat(filledWidth);
-    const empty = "░".repeat(width - filledWidth);
+    const empty = "▒".repeat(width - filledWidth);
     if (!color) {
         return filled + empty;
     }
     const shade = stale ? "90" : percent > 30 ? "32" : percent > 10 ? "38;5;208" : "31";
-    return `${filled ? `\x1B[${shade}m${filled}\x1B[0m` : ""}${empty ? `\x1B[90m${empty}\x1B[0m` : ""}`;
+    const emptyShade = stale ? "37" : "94";
+    return `${filled ? `\x1B[${shade}m${filled}\x1B[0m` : ""}${empty ? `\x1B[${emptyShade}m${empty}\x1B[0m` : ""}`;
 }
 
 export function formatRemainingCards(limits, options = {}) {

@@ -28,16 +28,16 @@ function resetAt(value) {
 function label(limit) {
     return limit.limitName ?? limit.limitId;
 }
-/** 利用可能なリセットクレジットの件数と内訳を1行で表す。 */
-function resetCreditsLine(resetCredits) {
+/** 利用可能なリセットクレジットの件数と期限順の内訳を箇条書きで表す。 */
+function resetCreditsLines(resetCredits) {
     const available = resetCredits.credits
         .filter((credit) => credit.status === "available")
         .sort((a, b) => (a.expiresAt ?? "").localeCompare(b.expiresAt ?? ""));
     const count = resetCredits.availableCount ?? available.length;
-    const details = available
-        .map((credit) => `${credit.title ?? credit.resetType ?? "不明"} / 期限 ${resetAt(credit.expiresAt)}`)
-        .join("、");
-    return `リセットクレジット: 利用可能 ${count}件${details === "" ? "" : `（${details}）`}`;
+    return [
+        `リセットクレジット: 利用可能 ${count}件`,
+        ...available.map((credit) => `  - ${credit.title ?? credit.resetType ?? "不明"} / 期限 ${resetAt(credit.expiresAt)}`),
+    ];
 }
 export function formatSnapshot(snapshot, notifyBelow = undefined, notifyMethod = "popup", notifyEvery = undefined, notifyExclude = [], notifyApiError = false, display = {}) {
     const settings = [];
@@ -79,7 +79,7 @@ export function formatSnapshot(snapshot, notifyBelow = undefined, notifyMethod =
         ])));
     }
     if (snapshot.resetCredits !== undefined) {
-        lines.push(resetCreditsLine(snapshot.resetCredits));
+        lines.push(...resetCreditsLines(snapshot.resetCredits));
     }
     return lines.join("\n");
 }

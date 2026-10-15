@@ -57,13 +57,13 @@ test("Codex は端末に残量バーを表示し、端末でも JSON にバー�
     assert.equal(human.code, 0);
     assert.match(human.stdout, /残量 50\.0%\n  /);
     assert.match(human.stdout, /█{16}/);
-    assert.match(human.stdout, /░{16}/);
+    assert.match(human.stdout, /▒{16}/);
     assert.match(human.stdout, /\n  リセット 不明/);
 
     const json = await captureOutputAsync(() => runCli(["--json"], { server }));
     assert.equal(json.code, 0);
     assert.equal(JSON.parse(json.stdout).limits[0].remainingPercent, 50);
-    assert.doesNotMatch(json.stdout, /[█░\x1B]/);
+    assert.doesNotMatch(json.stdout, /[█▒\x1B]/);
   } finally {
     if (ttyDescriptor) Object.defineProperty(process.stdout, "isTTY", ttyDescriptor);
     else delete process.stdout.isTTY;
